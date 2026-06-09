@@ -1,0 +1,200 @@
+clear; clc; close all;
+
+%% ============================================================
+%  MODELO
+%% ============================================================
+[Hbase, CS6p_raw] = CS6bot();
+theta_off = CS6p_raw(1:6);
+d_vec     = CS6p_raw(7:12);
+a_vec     = CS6p_raw(13:18);
+alpha_vec = CS6p_raw(19:24);
+for i = 1:6
+    L(i) = Link('d', d_vec(i), 'a', a_vec(i), ...
+                'alpha', alpha_vec(i), 'offset', theta_off(i), 'standard');
+end
+CS6 = SerialLink(L, 'name', 'COMAU SmartSix');
+CS6.base = Hbase;
+
+%% ============================================================
+%  PARAMETROS
+%% ============================================================
+dt    = 0.01;
+Kp    = 2.0;
+Ko    = 2.0;
+lam   = 0.01;
+N_reg = 1000;   % 10s por regulacao
+N_seg = 500;    % 5s por segmento de seguimento
+mm    = 1e-3;
+
+%% ============================================================
+%  ORIENTACAO DESEJADA (item iii)
+%% ============================================================
+Rd = [ 0,  0,  1;
+       0,  1,  0;
+      -1,  0,  0];
+
+%% ============================================================
+%  PONTOS
+%% ============================================================
+P0 = [700;    0;   650] * mm;
+P1 = [1000;  600; 1000] * mm;
+P2 = [1000;  600;  300] * mm;
+P3 = [1000; -600;  300] * mm;
+P4 = [1000; -600; 1000] * mm;
+
+%% ============================================================
+%  FUNCAO: erro de orientacao (eixo-angulo)
+%% ============================================================
+function eo = calc_eo(Rd, Re)
+    Rerr = Rd * Re';
+    th   = acos(max(-1, min(1, (trace(Rerr)-1)/2)));
+    if abs(th) < 1e-10
+        eo = [0;0;0];
+    else
+        eo = (th/(2*sin(th))) * ...
+             [Rerr(3,2)-Rerr(2,3); Rerr(1,3)-Rerr(3,1); Rerr(2,1)-Rerr(1,2)];
+    end
+end
+
+%% ============================================================
+%  FUNCAO: regulacao (sem feedforward)
+%% ============================================================
+function [q_out, Q, P] = regulacao(CS6, q0, Rd, pd, N, Kp, Ko, dt, lam)
+    Q = zeros(N, 6);  P = zeros(N, 3);  q = q0;
+    for k = 1:N
+        T  = CS6.fkine(q); if isobject(T), T = T.T; end
+        ep = pd - T(1:3,4);
+        eo = calc_eo(Rd, T(1:3,1:3));
+        J  = CS6.jacob0(q);
+        q  = q + (J'/(J*J' + lam^2*eye(6)) * [Kp*ep; Ko*eo])' * dt;
+        Q(k,:) = q;  P(k,:) = T(1:3,4)';
+    end
+    q_out = q;
+end
+
+%% ============================================================
+%  FUNCAO: seguimento linear com feedforward
+%% ============================================================
+function [q_out, Q, P] = seguimento(CS6, q0, Rd, Pa, Pb, N, Kp, Ko, dt, lam)
+    Q    = zeros(N, 6);  P = zeros(N, 3);  q = q0;
+    v_ff = (Pb - Pa) / (N * dt);   % velocidade feedforward
+    for k = 1:N
+        T  = CS6.fkine(q); if isobject(T), T = T.T; end
+        s  = (k-1)/(N-1);
+        pd = Pa + s*(Pb - Pa);
+        ep = pd - T(1:3,4);
+        eo = calc_eo(Rd, T(1:3,1:3));
+        J  = CS6.jacob0(q);
+        q  = q + (J'/(J*J' + lam^2*eye(6)) * [v_ff + Kp*ep; Ko*eo])' * dt;
+        Q(k,:) = q;  P(k,:) = T(1:3,4)';
+    end
+    q_out = q;
+end
+
+%% ============================================================
+%  FUNCAO: report
+%% ============================================================
+function report(label, CS6, q, pd, Rd)
+    T  = CS6.fkine(q); if isobject(T), T = T.T; end
+    ep = norm(T(1:3,4) - pd)*1e3;
+    eo = norm(T(1:3,1:3) - Rd);
+    fprintf('%-8s | pos: [%6.1f %6.1f %6.1f] mm | err_p: %.3f mm | err_o: %.6f\n', ...
+        label, T(1:3,4)'*1e3, ep, eo);
+end
+
+%% ============================================================
+%  SEQUENCIA DE MOVIMENTOS
+%% ============================================================
+q     = deg2rad([0, 0, -90, 0, -90, 0]);
+Q_all = q;
+P_all = [];
+
+% q0 -> P0
+fprintf('[REG] q0 -> P0 ... ');
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, Kp, Ko, dt, lam);
+Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
+report('P0', CS6, q, P0, Rd);
+
+% P0 -> P1  (regulacao, item vi)
+fprintf('[REG] P0 -> P1 ... ');
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P1, N_reg, Kp, Ko, dt, lam);
+Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
+report('P1', CS6, q, P1, Rd);
+
+% P1->P2->P3->P4->P1  (seguimento com feedforward, item vii)
+wpts = {P1, P2, P3, P4, P1};
+lbls = {'P1->P2','P2->P3','P3->P4','P4->P1'};
+fprintf('[TRAJ] Retangulo (com feedforward)\n');
+for s = 1:4
+    fprintf('   %s ... ', lbls{s});
+    [q, Qh, Ph] = seguimento(CS6, q, Rd, wpts{s}, wpts{s+1}, N_seg, Kp, Ko, dt, lam);
+    Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
+    report(lbls{s}(4:5), CS6, q, wpts{s+1}, Rd);
+end
+
+% P1 -> P0  (regulacao, item viii)
+fprintf('[REG] P1 -> P0 ... ');
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, Kp, Ko, dt, lam);
+Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
+report('P0', CS6, q, P0, Rd);
+
+%% ============================================================
+%  q_seq para CoppeliaSim
+%% ============================================================
+q_seq = rad2deg(Q_all)';
+fprintf('\nq_seq: %d juntas x %d amostras\n', size(q_seq,1), size(q_seq,2));
+if ~exist('results','dir'), mkdir('results'); end
+save('results/q_seq_retangulo.mat', 'q_seq');
+
+%% ============================================================
+%  FIGURA 1 — Animacao 3D
+%% ============================================================
+figure('Color','white','Position',[100 100 900 700]);
+CS6.plot(Q_all(1:5:end,:), ...
+    'workspace', [-1.5 1.5 -1.5 1.5 -1.2 2.0], ...
+    'jointdiam', 1, 'fps', 25, 'trail', 'r-', 'noname');
+ax = gca;
+ax.Color = 'white';  ax.XColor = 'black';
+ax.YColor = 'black'; ax.ZColor = 'black';
+set(gcf, 'Color', 'white');
+hold(ax, 'on');
+L_ax = 0.3;
+quiver3(ax,0,0,0,L_ax,0,0,'r','LineWidth',2,'AutoScale','off','MaxHeadSize',0.5);
+quiver3(ax,0,0,0,0,L_ax,0,'g','LineWidth',2,'AutoScale','off','MaxHeadSize',0.5);
+quiver3(ax,0,0,0,0,0,L_ax,'b','LineWidth',2,'AutoScale','off','MaxHeadSize',0.5);
+text(ax,L_ax+0.03,0,0,      'X_b','Color','r','FontWeight','bold','FontSize',11);
+text(ax,0,L_ax+0.03,0,      'Y_b','Color','g','FontWeight','bold','FontSize',11);
+text(ax,0,0,L_ax+0.03,      'Z_b','Color','b','FontWeight','bold','FontSize',11);
+title(ax,'COMAU Smart SiX — Retangulo','FontSize',13);
+
+%% ============================================================
+%  FIGURA 2 — Caminho no plano YZ
+%% ============================================================
+x_pl = 1000*mm;
+tol  = 30*mm;
+idx  = abs(P_all(:,1) - x_pl) < tol;
+
+figure('Color','white','Position',[100 80 800 650]);
+hold on; grid on; axis equal; box on;
+plot(P_all(:,2)*1e3, P_all(:,3)*1e3, '-','Color',[0.7 0.7 0.7],'LineWidth',1);
+if any(idx)
+    plot(P_all(idx,2)*1e3, P_all(idx,3)*1e3, 'b-','LineWidth',2.5);
+end
+rect_y = [600  600 -600 -600  600];
+rect_z = [1000 300  300 1000 1000];
+plot(rect_y, rect_z, 'g--','LineWidth',1.5);
+pts  = {P0,P1,P2,P3,P4};
+nms  = {'P0','P1','P2','P3','P4'};
+mkrs = {'ko','rs','rs','rs','rs'};
+for i = 1:5
+    p = pts{i};
+    plot(p(2)*1e3,p(3)*1e3,mkrs{i},'MarkerSize',9,'LineWidth',2);
+    text(p(2)*1e3+20,p(3)*1e3+15,nms{i},'FontSize',10,'FontWeight','bold');
+end
+xlabel('Y (mm)','FontSize',12); ylabel('Z (mm)','FontSize',12);
+title('Retangulo — Caminho do Efetuador no Plano YZ','FontSize',13);
+legend({'Trajetoria completa','No plano x=1000mm','Retangulo ideal'},'Location','best');
+xlim([-750 750]); ylim([100 1150]);
+saveas(gcf,'results/retangulo_YZ.png');
+
+fprintf('\n=== Concluido ===\n');

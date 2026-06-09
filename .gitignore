@@ -1,0 +1,11 @@
+# Resultados gerados automaticamente
+results/
+
+# Arquivos MATLAB temporários
+*.asv
+*.m~
+*.mex*
+octave-workspace
+
+# macOS
+.DS_Store

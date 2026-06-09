@@ -1,0 +1,153 @@
+% =========================================================
+%  modelagem.m
+%  ELE041/EEE935 — Manipuladores Roboticos — UFMG
+%  Prof. Gustavo Medeiros Freitas
+%
+%  Itens i e ii:
+%   - Modelagem do COMAU Smart SiX via DH (baseado em Pena, 2013)
+%   - Plot na configuracao inicial q0 = [0,0,-90,0,-90,0] graus
+% =========================================================
+clear; clc; close all;
+
+[Hbase, CS6p_raw] = CS6bot();
+
+% Raw = [theta1..6, d1..6, a1..6, alpha1..6] — 4 blocos de 6
+theta_off = CS6p_raw(1:6);
+d_vec     = CS6p_raw(7:12);
+a_vec     = CS6p_raw(13:18);
+alpha_vec = CS6p_raw(19:24);
+
+for i = 1:6
+    L(i) = Link('d',      d_vec(i),     ...
+                'a',      a_vec(i),     ...
+                'alpha',  alpha_vec(i), ...
+                'offset', theta_off(i), ...
+                'standard');
+end
+
+CS6 = SerialLink(L, 'name', 'COMAU SmartSix');
+CS6.base = Hbase;
+
+fprintf('Modelo criado: %s  (%d GDL)\n', CS6.name, CS6.n);
+
+%% ============================================================
+%  CONFIGURACAO INICIAL
+%% ============================================================
+q0 = deg2rad([0, 0, -90, 0, -90, 0]);
+
+%% ============================================================
+%  CINEMATICA DIRETA EM q0
+%% ============================================================
+T0 = CS6.fkine(q0);
+if isobject(T0), T0 = T0.T; end
+
+fprintf('\n=== Cinematica Direta — q0 = [0, 0, -90, 0, -90, 0] graus ===\n');
+fprintf('Matriz T (base -> efetuador):\n');
+disp(round(T0, 4));
+pos = T0(1:3, 4);
+fprintf('Posicao (m):  x=%.4f  y=%.4f  z=%.4f\n', pos(1), pos(2), pos(3));
+rpy = tr2rpy(T0, 'deg');
+fprintf('RPY (graus):  R=%.2f  P=%.2f  Y=%.2f\n', rpy(1), rpy(2), rpy(3));
+
+%% ============================================================
+%  PLOT DO ROBO NA CONFIGURACAO INICIAL
+%% ============================================================
+figure('Name','Modelagem - Configuracao Inicial', ...
+    'Color','white','Position',[100 100 900 700]);
+
+CS6.plot(q0, ...
+    'workspace', [-1.5 1.5 -1.5 1.5 -1.2 2.0], ...
+    'jointdiam', 1.5, ...
+    'fps', 10, ...
+    'noname');
+
+hold on;
+
+% --- Eixos da base ---
+L_ax = 0.35;
+quiver3(0,0,0, L_ax,0,0, 'r','LineWidth',2.5,'MaxHeadSize',0.5,'AutoScale','off');
+quiver3(0,0,0, 0,L_ax,0, 'g','LineWidth',2.5,'MaxHeadSize',0.5,'AutoScale','off');
+quiver3(0,0,0, 0,0,L_ax, 'b','LineWidth',2.5,'MaxHeadSize',0.5,'AutoScale','off');
+text(L_ax+0.04, 0,       0,       'X_b','FontSize',12,'Color','r','FontWeight','bold');
+text(0,       L_ax+0.04, 0,       'Y_b','FontSize',12,'Color','g','FontWeight','bold');
+text(0,       0,       L_ax+0.04, 'Z_b','FontSize',12,'Color','b','FontWeight','bold');
+
+title('COMAU Smart SiX — q_0 = [0°, 0°, -90°, 0°, -90°, 0°]','FontSize',13);
+view(135, 20);
+grid on;
+
+
+% Verificacao: cinematica direta manual (fiel ao PDF - Pena, 2013)
+[Hbase, CS6p_raw] = CS6bot();
+
+theta_off = CS6p_raw(1:6);
+d_vec     = CS6p_raw(7:12);
+a_vec     = CS6p_raw(13:18);
+alpha_vec = CS6p_raw(19:24);
+
+CS6p = [theta_off', d_vec', a_vec', alpha_vec'];  % 6x4
+
+AJ = deg2rad([0, 0, -90, 0, -90, 0]);  % q0
+
+i = 1;
+H01 = [cos(CS6p(1,1)+AJ(i,1)) -sin(CS6p(1,1)+AJ(i,1)) 0 0; ...
+    sin(CS6p(1,1)+AJ(i,1))  cos(CS6p(1,1)+AJ(i,1)) 0 0; ...
+    0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 1 0 0; 0 0 1 CS6p(1,2); 0 0 0 1] ...
+    * [1 0 0 CS6p(1,3); 0 1 0 0; 0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 cos(CS6p(1,4)) -sin(CS6p(1,4)) 0; ...
+    0 sin(CS6p(1,4))  cos(CS6p(1,4)) 0; 0 0 0 1];
+
+H12 = [cos(CS6p(2,1)+AJ(i,2)) -sin(CS6p(2,1)+AJ(i,2)) 0 0; ...
+    sin(CS6p(2,1)+AJ(i,2))  cos(CS6p(2,1)+AJ(i,2)) 0 0; ...
+    0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 1 0 0; 0 0 1 CS6p(2,2); 0 0 0 1] ...
+    * [1 0 0 CS6p(2,3); 0 1 0 0; 0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 cos(CS6p(2,4)) -sin(CS6p(2,4)) 0; ...
+    0 sin(CS6p(2,4))  cos(CS6p(2,4)) 0; 0 0 0 1];
+
+H23 = [cos(CS6p(3,1)+AJ(i,3)) -sin(CS6p(3,1)+AJ(i,3)) 0 0; ...
+    sin(CS6p(3,1)+AJ(i,3))  cos(CS6p(3,1)+AJ(i,3)) 0 0; ...
+    0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 1 0 0; 0 0 1 CS6p(3,2); 0 0 0 1] ...
+    * [1 0 0 CS6p(3,3); 0 1 0 0; 0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 cos(CS6p(3,4)) -sin(CS6p(3,4)) 0; ...
+    0 sin(CS6p(3,4))  cos(CS6p(3,4)) 0; 0 0 0 1];
+
+H34 = [cos(CS6p(4,1)+AJ(i,4)) -sin(CS6p(4,1)+AJ(i,4)) 0 0; ...
+    sin(CS6p(4,1)+AJ(i,4))  cos(CS6p(4,1)+AJ(i,4)) 0 0; ...
+    0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 1 0 0; 0 0 1 CS6p(4,2); 0 0 0 1] ...
+    * [1 0 0 CS6p(4,3); 0 1 0 0; 0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 cos(CS6p(4,4)) -sin(CS6p(4,4)) 0; ...
+    0 sin(CS6p(4,4))  cos(CS6p(4,4)) 0; 0 0 0 1];
+
+H45 = [cos(CS6p(5,1)+AJ(i,5)) -sin(CS6p(5,1)+AJ(i,5)) 0 0; ...
+    sin(CS6p(5,1)+AJ(i,5))  cos(CS6p(5,1)+AJ(i,5)) 0 0; ...
+    0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 1 0 0; 0 0 1 CS6p(5,2); 0 0 0 1] ...
+    * [1 0 0 CS6p(5,3); 0 1 0 0; 0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 cos(CS6p(5,4)) -sin(CS6p(5,4)) 0; ...
+    0 sin(CS6p(5,4))  cos(CS6p(5,4)) 0; 0 0 0 1];
+
+H56 = [cos(CS6p(6,1)+AJ(i,6)) -sin(CS6p(6,1)+AJ(i,6)) 0 0; ...
+    sin(CS6p(6,1)+AJ(i,6))  cos(CS6p(6,1)+AJ(i,6)) 0 0; ...
+    0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 1 0 0; 0 0 1 CS6p(6,2); 0 0 0 1] ...
+    * [1 0 0 CS6p(6,3); 0 1 0 0; 0 0 1 0; 0 0 0 1] ...
+    * [1 0 0 0; 0 cos(CS6p(6,4)) -sin(CS6p(6,4)) 0; ...
+    0 sin(CS6p(6,4))  cos(CS6p(6,4)) 0; 0 0 0 1];
+
+H06_manual = Hbase * H01 * H12 * H23 * H34 * H45 * H56;
+
+fprintf('=== Cinematica Direta MANUAL (PDF) ===\n');
+disp(round(H06_manual, 4));
+fprintf('Posicao (m): x=%.4f  y=%.4f  z=%.4f\n', ...
+    H06_manual(1,4), H06_manual(2,4), H06_manual(3,4));
+
+fprintf('\n=== Cinematica Direta TOOLBOX (SerialLink) ===\n');
+disp(round(T0, 4));
+fprintf('Posicao (m): x=%.4f  y=%.4f  z=%.4f\n', T0(1,4), T0(2,4), T0(3,4));
+
+fprintf('\n=== Diferenca (Manual - Toolbox) ===\n');
+disp(round(H06_manual - T0, 6));
