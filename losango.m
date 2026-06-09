@@ -3,10 +3,10 @@
 %  ELE041/EEE935 — Manipuladores Roboticos — UFMG
 %  Prof. Gustavo Medeiros Freitas
 %
-%  Itens xi a xiii:
-%   xi.   Regulacao:  P0 -> P5
-%   xii.  Seguimento: P5->P5inf->P5dir->P5sup->P5 (anti-horário com feedforward)
-%   xiii. Regulacao:  P5 -> P0
+%  Itens ix a x:
+%      Regulacao:  P0 -> P5
+%      Seguimento: P5->P5inf->P5dir->P5sup->P5 (anti-horário com feedforward)
+%      Regulacao:  P5 -> P0
 %
 %  Controle cinematico via Jacobiana Geometrica e erro de
 %  orientacao eixo-angulo (rotm2axang2), conforme control.m
