@@ -3,7 +3,7 @@
 %  ELE041/EEE935 — Manipuladores Roboticos — UFMG
 %  Prof. Gustavo Medeiros Freitas
 %
-%  Itens vi a viii:
+%  Itens xi a xiii:
 %   xi.   Regulacao:  P0 -> P5
 %   xii.  Seguimento: P5->P5inf->P5dir->P5sup->P5 (anti-horário com feedforward)
 %   xiii. Regulacao:  P5 -> P0
@@ -99,7 +99,7 @@ end
 %% ============================================================
 %  SEGUIMENTO LINEAR COM FEEDFORWARD
 %  v_ff injeta a velocidade da trajetoria diretamente,
-%  reduzindo o erro de rastreamento nos cantos.
+%  reduzindo o erro de rastreamento.
 %% ============================================================
 function [q_out, Q, P] = seguimento(CS6, q0, Rd, Pa, Pb, N, K, dt, lam)
     Q    = zeros(N, 6);  P = zeros(N, 3);  q = q0(:);
@@ -220,7 +220,7 @@ los_y = [-600  0 600 0  -600];
 los_z = [650 300  650 1000 650];
 plot(los_y, los_z, 'g--','LineWidth',1.5);
 pts  = {P0,P5,P5inf,P5dir,P5sup};
-nms  = {'P0','P5','P5_{inf}','P5_{dir}','P_{sup}'};
+nms  = {'P0','P5','P5_{inf}','P5_{dir}','P5_{sup}'};
 mkrs = {'ko','rs','rs','rs','rs'};
 for i = 1:5
     p = pts{i};
