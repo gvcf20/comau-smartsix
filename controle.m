@@ -1,7 +1,5 @@
 % =========================================================
-%  item_iv_regulacao_P0.m
 %  Regulacao: q0 -> P0 = [700; 0; 650] mm
-%  Orientacao desejada constante (item iii)
 % =========================================================
 clear; clc; close all;
 
@@ -18,7 +16,7 @@ end
 CS6 = SerialLink(L, 'name', 'COMAU SmartSix');
 CS6.base = Hbase;
 
-%% Orientacao desejada (item iii)
+%% Orientacao desejada
 Rd = [ 0,  0,  1;
        0,  1,  0;
       -1,  0,  0];
@@ -26,7 +24,7 @@ Rd = [ 0,  0,  1;
 %% Parametros
 q   = deg2rad([0, 0, -90, 0, -90, 0]);
 P0  = [700; 0; 650] * 1e-3;
-Td  = [Rd, P0; 0 0 0 1];
+Td  = [Rd, P0; 0 0 0 1]; %% Pose desejada
 dt  = 0.01;
 Kp  = 1.0;
 Ko  = 1.0;

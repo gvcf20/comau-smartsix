@@ -1,7 +1,6 @@
 % =========================================================
 %  retangulo.m
 %  ELE041/EEE935 — Manipuladores Roboticos — UFMG
-%  Prof. Gustavo Medeiros Freitas
 %
 %  Itens vi a viii:
 %   vi.   Regulacao:  P0 -> P1
