@@ -173,28 +173,45 @@ save('results/q_seq_bandeira.mat', 'q_seq');
 %  7. ANIMAÇÃO DO ROBÔ COM TRAIL SELETIVO
 %% ============================================================
 figure('Name','Animação 3D — COMAU SmartSix','Color','white','Position',[100 100 800 600]);
-% Inicializa o ambiente gráfico com a pose de partida
 CS6.plot(Q_all(1,:), 'workspace', [-1.5 1.5 -1.5 1.5 -1.2 2.0], 'jointdiam', 1, 'noname');
+
+ax = gca;
+ax.Color     = 'white';
+ax.XColor    = 'black';
+ax.YColor    = 'black';
+ax.ZColor    = 'black';
+ax.GridColor = 'black';
+ax.GridAlpha = 0.3;
+set(gcf, 'Color', 'white');
 hold on;
 
-% Plotagem geométrica dos eixos da base
+% Eixos da base
 L_ax = 0.3;
 quiver3(0,0,0,L_ax,0,0,'r','LineWidth',2,'AutoScale','off','MaxHeadSize',0.5);
 quiver3(0,0,0,0,L_ax,0,'g','LineWidth',2,'AutoScale','off','MaxHeadSize',0.5);
 quiver3(0,0,0,0,0,L_ax,'b','LineWidth',2,'AutoScale','off','MaxHeadSize',0.5);
+text(L_ax+0.03,0,0,      'X_b','Color','r','FontWeight','bold','FontSize',11);
+text(0,L_ax+0.03,0,      'Y_b','Color','g','FontWeight','bold','FontSize',11);
+text(0,0,L_ax+0.03,      'Z_b','Color','b','FontWeight','bold','FontSize',11);
 
-% Loop de animação contínua (subamostrado por passo_f para maior fluidez)
 passo_f = 10;
 for k = 1:passo_f:size(Q_all,1)
     CS6.animate(Q_all(k,:));
-    
-    % Desenha o rastro em tempo real APENAS se o flag for verdadeiro
+
+    % Fundo branco a cada frame
+    ax.Color     = 'white';
+    ax.XColor    = 'black';
+    ax.YColor    = 'black';
+    ax.ZColor    = 'black';
+    ax.GridColor = 'black';
+
+    % Rastro vermelho continuo apenas nos trechos de desenho
     if Desenha_all(k)
-        plot3(P_all(k,1), P_all(k,2), P_all(k,3), 'b.', 'MarkerSize', 5);
+        plot3(ax, P_all(k,1), P_all(k,2), P_all(k,3), 'r.', 'MarkerSize', 5);
     end
     drawnow;
 end
-CS6.animate(Q_all(end,:)); drawnow; % Garante a plotagem da pose final de retorno
+CS6.animate(Q_all(end,:)); drawnow;
 
 %% ============================================================
 %  8. FIGURA FINAL ISOLADA NO PLANO YZ (SEM POLUIÇÃO DE TRANSIÇÃO)
