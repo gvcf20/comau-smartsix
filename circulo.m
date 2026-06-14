@@ -24,16 +24,15 @@ for i = 1:6
 end
 CS6 = SerialLink(L, 'name', 'COMAU SmartSix');
 CS6.base = Hbase;
-
 %% ============================================================
 %  PARAMETROS
 %% ============================================================
-dt    = 0.01;
-K     = 2.0;    % ganho unico (posicao e orientacao)
-lam   = 0.01;   % amortecimento para pseudo-inversa
-N_reg = 1000;   % iteracoes regulacao  (10s)
-N_seg = 2000;   % iteracoes seguimento (20s) para o circulo completo
-mm    = 1e-3;
+dt      = 0.015;   % passo de integracao 
+K       = 2.0;     % ganho proporcional
+N_reg   = 1000;    % iteracoes regulacao  (10s)
+N_seg   = 1000;    % iteracoes seguimento (10s) para o circulo completo
+epsilon = 1e-3;    % criterio de parada regulacao
+mm      = 1e-3;
 
 %% ============================================================
 %  ORIENTACAO DESEJADA (item iii)
@@ -46,77 +45,106 @@ Rd = [ 0,  0,  1;
 %  PONTOS E GEOMETRIA DO CIRCULO
 %% ============================================================
 P0 = [700; 0; 650] * mm;
-C  = [1000; 0; 650] * mm; % Centro geométrico do círculo
+C  = [1000; 0; 650] * mm; % Centro geometrico do circulo
 
-% Cálculo do raio do círculo tangente ao losango
+% Calculo do raio do circulo tangente ao losango
 a = 600; % semi-eixo em Y
 b = 350; % semi-eixo em Z
-R = (a * b) / sqrt(a^2 + b^2); % Raio em milímetros (~302.32 mm)
+R = (a * b) / sqrt(a^2 + b^2); % Raio em milimetros (~302.32 mm)
 R_m = R * mm;                  % Raio em metros
 
-% Ponto inicial P6 (Parte inferior do círculo)
-P6 = C + [0; 0; -R_m]; 
+% Ponto inicial P6 (Parte inferior do circulo)
+P6 = C + [0; 0; -R_m];
 
 %% ============================================================
-%  ERRO DE ORIENTACAO
+%  FUNCOES LOCAIS
 %% ============================================================
-function eo = orient_err(Rd, Re)
-    nphi = rotm2axang2(Rd * Re');   
-    eo   = (nphi(1:3) * nphi(4))'; 
+function T = getT(Tin)
+% Padroniza a saida da fkine para matriz homogenea 4x4.
+    if isobject(Tin)
+        T = Tin.T;
+    else
+        T = Tin;
+    end
+end
+
+function [erro_ori, erro_rpy] = erroOrientacao(Rd, R_atual)
+% Calcula erro de orientacao em eixo-angulo (para controle)
+% e em RPY (para analise grafica)
+    R_erro = Rd * R_atual';
+    axang  = rotm2axang2(R_erro);
+    eixo   = axang(1:3)';
+    phi    = axang(4);
+    erro_ori = eixo * phi;
+    erro_rpy = tr2rpy(R_erro);
+    erro_rpy = erro_rpy(:)';
 end
 
 %% ============================================================
 %  REGULACAO
+%  Lei de controle: u = pinv(J) * K * e  
+%  Criterio de parada: norm(e) < epsilon
 %% ============================================================
-function [q_out, Q, P] = regulacao(CS6, q0, Rd, pd, N, K, dt, lam)
+function [q_out, Q, P] = regulacao(CS6, q0, Rd, pd, N, K, dt, epsilon)
     Q = zeros(N, 6);  P = zeros(N, 3);  q = q0(:);
+    k_final = N;
     for k = 1:N
-        T  = CS6.fkine(q'); if isobject(T), T = T.T; end
-        p  = T(1:3, 4);
-        R_mat = T(1:3, 1:3);
+        T = getT(CS6.fkine(q'));
+        p = T(1:3, 4);
+        R = T(1:3, 1:3);
 
-        p_err   = pd - p;
-        eo      = orient_err(Rd, R_mat);
-        e       = [p_err; eo];
+        erro_pos = pd - p;
+        [erro_ori, ~] = erroOrientacao(Rd, R);
+        e = [erro_pos; erro_ori];
+
+        if norm(e) < epsilon
+            k_final = k;
+            Q(k,:) = q';
+            P(k,:) = p';
+            break;
+        end
 
         J = CS6.jacob0(q');
-        u = (J' / (J*J' + lam^2*eye(6))) * (K * e);
+        u = pinv(J) * (K * e);
 
         q = q + dt * u;
         Q(k,:) = q';
         P(k,:) = p';
     end
+    Q     = Q(1:k_final, :);
+    P     = P(1:k_final, :);
     q_out = q';
 end
 
 %% ============================================================
 %  SEGUIMENTO CIRCULAR COM FEEDFORWARD
+%  Lei de controle: u = pinv(J) * (v_ff + K * e)
 %% ============================================================
-function [q_out, Q, P] = seguimento_circular(CS6, q0, Rd, C, R, N, K, dt, lam)
+function [q_out, Q, P] = seguimento_circular(CS6, q0, Rd, C, R, N, K, dt)
     Q = zeros(N, 6);  P = zeros(N, 3);  q = q0(:);
-    omega = (2*pi) / (N * dt); % Velocidade angular constante necessária
-    
+    omega = (2*pi) / (N * dt); % Velocidade angular constante necessaria
+
     for k = 1:N
-        T  = CS6.fkine(q'); if isobject(T), T = T.T; end
-        p  = T(1:3, 4);
+        T = getT(CS6.fkine(q'));
+        p = T(1:3, 4);
         R_mat = T(1:3, 1:3);
 
         s   = (k-1)/(N-1);
-        ang = 2 * pi * s; % Ângulo varia de 0 a 2*pi
-        
-        % Posição desejada na circunferência (sentido anti-horário começando debaixo)
-        % Y(t) = R * sen(ang) | Z(t) = -R * cos(ang)
+        ang = 2 * pi * s; % Angulo varia de 0 a 2*pi
+
+        % Posicao desejada na circunferencia (sentido anti-horario comecando debaixo)
+        % Y(t) = R * sin(ang) | Z(t) = -R * cos(ang)
         pd = C + [0; R*sin(ang); -R*cos(ang)];
-        
+
         % Velocidade feedforward cartesiana tangencial
         v_ff = [0; R*omega*cos(ang); R*omega*sin(ang); 0; 0; 0];
-        
-        p_err   = pd - p;
-        eo      = orient_err(Rd, R_mat);
-        e       = [p_err; eo];
+
+        erro_pos = pd - p;
+        [erro_ori, ~] = erroOrientacao(Rd, R_mat);
+        e = [erro_pos; erro_ori];
 
         J = CS6.jacob0(q');
-        u = (J' / (J*J' + lam^2*eye(6))) * (v_ff + K * e);
+        u = pinv(J) * (v_ff + K * e);
 
         q = q + dt * u;
         Q(k,:) = q';
@@ -129,12 +157,11 @@ end
 %  HELPER: imprime erro ao final de cada movimento
 %% ============================================================
 function report(label, CS6, q, pd, Rd)
-    T  = CS6.fkine(q); if isobject(T), T = T.T; end
+    T  = getT(CS6.fkine(q));
     ep = norm(T(1:3,4) - pd) * 1e3;
-    nphi = rotm2axang2(Rd * T(1:3,1:3)');
-    eo   = norm(nphi(1:3) * nphi(4));
+    [eo, ~] = erroOrientacao(Rd, T(1:3,1:3));
     fprintf('%-8s | pos: [%6.1f %6.1f %6.1f] mm | err_p: %.3f mm | err_o: %.6f\n', ...
-        label, T(1:3,4)'*1e3, ep, eo);
+        label, T(1:3,4)'*1e3, ep, norm(eo));
 end
 
 %% ============================================================
@@ -146,25 +173,25 @@ P_all = [];
 
 % q0 -> P0  (regulacao)
 fprintf('[REG] q0 -> P0 ... ');
-[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, K, dt, lam);
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, K, dt, epsilon);
 Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
 report('P0', CS6, q, P0, Rd);
 
 % P0 -> P6  (regulacao)
 fprintf('[REG] P0 -> P6 ... ');
-[q, Qh, Ph] = regulacao(CS6, q, Rd, P6, N_reg, K, dt, lam);
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P6, N_reg, K, dt, epsilon);
 Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
 report('P6', CS6, q, P6, Rd);
 
 % Circulo completo (seguimento com feedforward)
 fprintf('[TRAJ] Circulo Anti-Horario ... ');
-[q, Qh, Ph] = seguimento_circular(CS6, q, Rd, C, R_m, N_seg, K, dt, lam);
+[q, Qh, Ph] = seguimento_circular(CS6, q, Rd, C, R_m, N_seg, K, dt);
 Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
 report('P6_fim', CS6, q, P6, Rd); % Volta para P6 ao final dos 360 graus
 
 % P6 -> P0  (regulacao)
 fprintf('[REG] P6 -> P0 ... ');
-[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, K, dt, lam);
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, K, dt, epsilon);
 Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
 report('P0', CS6, q, P0, Rd);
 
@@ -230,5 +257,7 @@ title('Circulo — Caminho do Efetuador no Plano YZ','FontSize',13);
 legend({'Trajetoria completa','No plano x=1000mm','Circulo ideal'},'Location','best');
 xlim([-750 750]); ylim([100 1150]);
 saveas(gcf,'results/circulo_YZ.png');
+
+fprintf('\n=== Concluido ===\n');
 
 fprintf('\n=== Concluido ===\n');
