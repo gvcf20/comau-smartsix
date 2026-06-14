@@ -41,7 +41,7 @@ robot.base = Hbase;
 dt      = 0.015;   % passo de integração
 K       = 2.0;     % ganho proporcional
 N_reg   = 1000;    % máximo de iterações para regulação
-N_seg   = 400;     % iteraçoes segmento de desenho
+N_seg   = 500;     % iteraçoes segmento de desenho
 epsilon = 1e-3;    % critério de parada da regulação (norma do erro em m/rad)
 mm      = 1e-3;    % conversão mm -> m
 
