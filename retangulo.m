@@ -33,8 +33,8 @@ CS6.base = Hbase;
 %% ============================================================
 dt      = 0.015;   % passo de integracao 
 K       = 2.0;     % ganho proporcional
-N_reg   = 1000;    % iteracoes regulacao  (10s)
-N_seg   = 400;     % iteracoes seguimento (4s)
+N_reg   = 1000;    % iteracoes regulacao  
+N_seg   = 500;     % iteracoes seguimento
 epsilon = 1e-3;    % criterio de parada regulacao
 mm      = 1e-3;
 
