@@ -33,12 +33,12 @@ CS6.base = Hbase;
 %% ============================================================
 %  PARAMETROS
 %% ============================================================
-dt    = 0.01;
-K     = 2.0;    % ganho unico (posicao e orientacao), conforme control.m
-lam   = 0.01;   % amortecimento para pseudo-inversa
-N_reg = 1000;   % iteracoes regulacao  (10s)
-N_seg = 500;    % iteracoes seguimento (5s)
-mm    = 1e-3;
+dt      = 0.015;   % passo de integracao 
+K       = 2.0;     % ganho proporcional
+N_reg   = 1000;    % iteracoes regulacao  (10s)
+N_seg   = 400;     % iteracoes seguimento (4s)
+epsilon = 1e-3;    % criterio de parada regulacao
+mm      = 1e-3;
 
 %% ============================================================
 %  ORIENTACAO DESEJADA (item iii)
@@ -49,74 +49,94 @@ Rd = [ 0,  0,  1;
       -1,  0,  0];
 
 %% ============================================================
-%  PONTOS DO LOSANGO (Calculados a partir dos limites do retangulo)
+%  PONTOS DO LOSANGO
 %% ============================================================
-P0  = [700;    0;  650] * mm;
-P5  = [1000; -600;  650] * mm; % Vertice Esquerdo (P5)
+P0    = [700;    0;  650] * mm;
+P5    = [1000; -600;  650] * mm; % Vertice Esquerdo
 P5inf = [1000;    0;  300] * mm; % Vertice Inferior
 P5dir = [1000;  600;  650] * mm; % Vertice Direito
 P5sup = [1000;    0; 1000] * mm; % Vertice Superior
 
+%% ============================================================
+%  FUNCOES LOCAIS
+%% ============================================================
+function T = getT(Tin)
+% Padroniza a saida da fkine para matriz homogenea 4x4.
+    if isobject(Tin)
+        T = Tin.T;
+    else
+        T = Tin;
+    end
+end
 
-%% ============================================================
-%  ERRO DE ORIENTACAO (padrao Moodle: rotm2axang2)
-%  rotm2axang2 retorna [nx, ny, nz, theta]
-%  erro = n * theta  (vetor 3x1)
-%% ============================================================
-function eo = orient_err(Rd, Re)
-    nphi = rotm2axang2(Rd * Re');   % [nx ny nz theta]
-    eo   = (nphi(1:3) * nphi(4))'; % n*theta, coluna 3x1
+function [erro_ori, erro_rpy] = erroOrientacao(Rd, R_atual)
+% Calcula erro de orientacao em eixo-angulo (para controle)
+% e em RPY (para analise grafica)
+    R_erro = Rd * R_atual';
+    axang  = rotm2axang2(R_erro);
+    eixo   = axang(1:3)';
+    phi    = axang(4);
+    erro_ori = eixo * phi;
+    erro_rpy = tr2rpy(R_erro);
+    erro_rpy = erro_rpy(:)';
 end
 
 %% ============================================================
 %  REGULACAO
-%  Segue exatamente a estrutura do control.m do Moodle:
-%    e = [p_err; nphi_err]
-%    u = pinv(J) * K * e
-%    theta = theta + dt * u
+%  Lei de controle: u = pinv(J) * K * e   
+%  Criterio de parada: norm(e) < epsilon
 %% ============================================================
-function [q_out, Q, P] = regulacao(CS6, q0, Rd, pd, N, K, dt, lam)
+function [q_out, Q, P] = regulacao(CS6, q0, Rd, pd, N, K, dt, epsilon)
     Q = zeros(N, 6);  P = zeros(N, 3);  q = q0(:);
+    k_final = N;
     for k = 1:N
-        T  = CS6.fkine(q'); if isobject(T), T = T.T; end
-        p  = T(1:3, 4);
-        R  = T(1:3, 1:3);
+        T = getT(CS6.fkine(q'));
+        p = T(1:3, 4);
+        R = T(1:3, 1:3);
 
-        p_err   = pd - p;
-        eo      = orient_err(Rd, R);
-        e       = [p_err; eo];
+        erro_pos = pd - p;
+        [erro_ori, ~] = erroOrientacao(Rd, R);
+        e = [erro_pos; erro_ori];
+
+        if norm(e) < epsilon
+            k_final = k;
+            Q(k,:) = q';
+            P(k,:) = p';
+            break;
+        end
 
         J = CS6.jacob0(q');
-        u = (J' / (J*J' + lam^2*eye(6))) * (K * e);
+        u = pinv(J) * (K * e);
 
         q = q + dt * u;
         Q(k,:) = q';
         P(k,:) = p';
     end
+    Q     = Q(1:k_final, :);
+    P     = P(1:k_final, :);
     q_out = q';
 end
 
 %% ============================================================
 %  SEGUIMENTO LINEAR COM FEEDFORWARD
-%  v_ff injeta a velocidade da trajetoria diretamente,
-%  reduzindo o erro de rastreamento.
+%  Lei de controle: u = pinv(J) * (v_ff + K * e)
 %% ============================================================
-function [q_out, Q, P] = seguimento(CS6, q0, Rd, Pa, Pb, N, K, dt, lam)
+function [q_out, Q, P] = seguimento(CS6, q0, Rd, Pa, Pb, N, K, dt)
     Q    = zeros(N, 6);  P = zeros(N, 3);  q = q0(:);
-    v_ff = [(Pb - Pa) / (N * dt); zeros(3,1)];  
+    v_ff = [(Pb - Pa) / (N * dt); zeros(3,1)];
     for k = 1:N
-        T  = CS6.fkine(q'); if isobject(T), T = T.T; end
-        p  = T(1:3, 4);
-        R  = T(1:3, 1:3);
+        T = getT(CS6.fkine(q'));
+        p = T(1:3, 4);
+        R = T(1:3, 1:3);
 
-        s       = (k-1)/(N-1);
-        pd      = Pa + s*(Pb - Pa);
-        p_err   = pd - p;
-        eo      = orient_err(Rd, R);
-        e       = [p_err; eo];
+        s   = (k-1)/(N-1);
+        pd  = Pa + s*(Pb - Pa);
+        erro_pos = pd - p;
+        [erro_ori, ~] = erroOrientacao(Rd, R);
+        e = [erro_pos; erro_ori];
 
         J = CS6.jacob0(q');
-        u = (J' / (J*J' + lam^2*eye(6))) * (v_ff + K * e);
+        u = pinv(J) * (v_ff + K * e);
 
         q = q + dt * u;
         Q(k,:) = q';
@@ -129,12 +149,11 @@ end
 %  HELPER: imprime erro ao final de cada movimento
 %% ============================================================
 function report(label, CS6, q, pd, Rd)
-    T  = CS6.fkine(q); if isobject(T), T = T.T; end
+    T  = getT(CS6.fkine(q));
     ep = norm(T(1:3,4) - pd) * 1e3;
-    nphi = rotm2axang2(Rd * T(1:3,1:3)');
-    eo   = norm(nphi(1:3) * nphi(4));
+    [eo, ~] = erroOrientacao(Rd, T(1:3,1:3));
     fprintf('%-8s | pos: [%6.1f %6.1f %6.1f] mm | err_p: %.3f mm | err_o: %.6f\n', ...
-        label, T(1:3,4)'*1e3, ep, eo);
+        label, T(1:3,4)'*1e3, ep, norm(eo));
 end
 
 %% ============================================================
@@ -146,30 +165,30 @@ P_all = [];
 
 % q0 -> P0  (regulacao)
 fprintf('[REG] q0 -> P0 ... ');
-[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, K, dt, lam);
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, K, dt, epsilon);
 Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
 report('P0', CS6, q, P0, Rd);
 
-% P0 -> P1  (regulacao)
+% P0 -> P5  (regulacao)
 fprintf('[REG] P0 -> P5 ... ');
-[q, Qh, Ph] = regulacao(CS6, q, Rd, P5, N_reg, K, dt, lam);
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P5, N_reg, K, dt, epsilon);
 Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
 report('P5', CS6, q, P5, Rd);
 
-% P5->P5inf->P5esq->Psup->P5  (seguimento com feedforward)
+% P5->P5inf->P5dir->P5sup->P5  (seguimento com feedforward)
 wpts = {P5, P5inf, P5dir, P5sup, P5};
 lbls = {'P5->P5inf','P5inf->P5dir','P5dir->P5sup','P5sup->P5'};
 fprintf('[TRAJ] Losango\n');
 for s = 1:4
     fprintf('   %s ... ', lbls{s});
-    [q, Qh, Ph] = seguimento(CS6, q, Rd, wpts{s}, wpts{s+1}, N_seg, K, dt, lam);
+    [q, Qh, Ph] = seguimento(CS6, q, Rd, wpts{s}, wpts{s+1}, N_seg, K, dt);
     Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
     report(lbls{s}(4:5), CS6, q, wpts{s+1}, Rd);
 end
 
 % P5 -> P0  (regulacao)
-fprintf('[REG] P1 -> P0 ... ');
-[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, K, dt, lam);
+fprintf('[REG] P5 -> P0 ... ');
+[q, Qh, Ph] = regulacao(CS6, q, Rd, P0, N_reg, K, dt, epsilon);
 Q_all = [Q_all; Qh];  P_all = [P_all; Ph];
 report('P0', CS6, q, P0, Rd);
 
@@ -180,7 +199,6 @@ q_seq = rad2deg(Q_all)';
 fprintf('\nq_seq: %d juntas x %d amostras\n', size(q_seq,1), size(q_seq,2));
 if ~exist('results','dir'), mkdir('results'); end
 save('results/q_seq_losango.mat', 'q_seq');
-
 
 %% ============================================================
 %  FIGURA 1 — Animacao 3D
