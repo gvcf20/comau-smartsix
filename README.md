@@ -183,13 +183,16 @@ onde `v_d = [Kp·ep; Ko·eo]` e `J† = Jᵀ(JJᵀ + λ²I)⁻¹`.
 - **Erro de posição:** `ep = pd - p(q)`
 - **Erro de orientação:** representação eixo-ângulo `eo = n̂·θ` via `rotm2axang2`
 - **Seguimento:** feedforward de velocidade `v_ff = (pb - pa)/(N·dt)` para reduzir erro de rastreamento nos cantos
+- **Regulação:** critério de parada antecipada `‖e‖ < ε` (convergência)
 
-| Parâmetro | Valor  | Descrição                        |
-|-----------|--------|----------------------------------|
-| `K`       | 2.0    | Ganho proporcional               |
-| `dt`      | 0.01 s | Passo de integração (Euler)      |
-| `lam`     | 0.01   | Amortecimento da Jacobiana       |
-| `N_reg`   | 1000   | Iterações por regulação (10 s)   |
-| `N_seg`   | 500    | Iterações por segmento (5 s)     |
+| Parâmetro | Valor    | Descrição                             |
+|-----------|----------|---------------------------------------|
+| `K`       | 2.0      | Ganho proporcional (posição e orientação) |
+| `dt`      | 0.015 s  | Passo de integração (Euler)           |
+| `epsilon` | 1e-3     | Critério de parada da regulação       |
+| `N_reg`   | 1000     | Iterações máximas por regulação       |
+| `N_seg`   | 500      | Iterações por segmento                |
+
+
 
 ---
