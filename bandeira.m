@@ -447,38 +447,43 @@ function [q_final, q_traj, pos_traj, u_traj, pos_ref_traj, erro_rpy_traj] = ...
 end
 
 function animacaoRapida(robot, q_traj, pos_traj, flag_desenho)
-% Anima o robô e mostra rastro apenas nos trechos de desenho.
+% Anima o robô em duas vistas (3D e frontal) e salva o vídeo em /figs
 
-    figure('Name','Animação 3D — COMAU SmartSix', ...
-           'Color','white', ...
-           'Position',[100 100 800 600]);
+    vid = VideoWriter(fullfile('figs','animacao_bandeira.mp4'), 'MPEG-4');
+    vid.FrameRate = 30;
+    vid.Quality   = 95;
+    open(vid);
 
+    fig = figure('Name','Animação — COMAU SmartSix', ...
+                  'Color','white', ...
+                  'Position',[50 50 1400 650]);
+
+    % --- Subplot 1: vista 3D (perspectiva) ---
+    ax1 = subplot(1,2,1);
     robot.plot(q_traj(1,:), ...
                'workspace',[-1.5 1.5 -1.5 1.5 -1.2 2.0], ...
                'jointdiam',1, ...
                'noname');
+    title(ax1,'Vista 3D');
+    formatarEixos(ax1);
+    hold(ax1,'on');
+    desenharEixosBase(ax1);
+    hTrail1 = plot3(ax1,NaN,NaN,NaN,'r-','LineWidth',1.8);
 
-    ax = gca;
-    ax.Color = 'white';
-    ax.XColor = 'black';
-    ax.YColor = 'black';
-    ax.ZColor = 'black';
-    ax.GridColor = 'black';
-    ax.GridAlpha = 0.3;
+    % --- Subplot 2: vista frontal (plano YZ, olhando ao longo de X) ---
+    ax2 = subplot(1,2,2);
+    robot.plot(q_traj(1,:), ...
+               'workspace',[-1.5 1.5 -1.5 1.5 -1.2 2.0], ...
+               'jointdiam',1, ...
+               'noname');
+    view(ax2,[90 0]);   % olha ao longo do eixo X -> plano YZ em frente
+    title(ax2,'Vista Frontal (Plano YZ)');
+    formatarEixos(ax2);
+    hold(ax2,'on');
+    desenharEixosBase(ax2);
+    hTrail2 = plot3(ax2,NaN,NaN,NaN,'r-','LineWidth',1.8);
 
-    hold on;
-
-    % Eixos da base
-    L = 0.3;
-    quiver3(0,0,0,L,0,0,'r','LineWidth',2,'AutoScale','off');
-    quiver3(0,0,0,0,L,0,'g','LineWidth',2,'AutoScale','off');
-    quiver3(0,0,0,0,0,L,'b','LineWidth',2,'AutoScale','off');
-
-    text(L+0.03,0,0,'X_b','Color','r','FontWeight','bold');
-    text(0,L+0.03,0,'Y_b','Color','g','FontWeight','bold');
-    text(0,0,L+0.03,'Z_b','Color','b','FontWeight','bold');
-
-    % Usa NaN para esconder trechos sem desenho
+    % --- Rastro do efetuador ---
     trail_x = pos_traj(:,1);
     trail_y = pos_traj(:,2);
     trail_z = pos_traj(:,3);
@@ -487,28 +492,50 @@ function animacaoRapida(robot, q_traj, pos_traj, flag_desenho)
     trail_y(~flag_desenho) = NaN;
     trail_z(~flag_desenho) = NaN;
 
-    hTrail = plot3(ax,NaN,NaN,NaN,'r-','LineWidth',1.8);
-
     passo_animacao = 20;
 
     for k = 1:passo_animacao:size(q_traj,1)
         robot.animate(q_traj(k,:));
 
-        set(hTrail,'XData',trail_x(1:k), ...
-                   'YData',trail_y(1:k), ...
-                   'ZData',trail_z(1:k));
+        set(hTrail1,'XData',trail_x(1:k),'YData',trail_y(1:k),'ZData',trail_z(1:k));
+        set(hTrail2,'XData',trail_x(1:k),'YData',trail_y(1:k),'ZData',trail_z(1:k));
 
-        drawnow limitrate nocallbacks;
+        drawnow;
+
+        frame = getframe(fig);
+        writeVideo(vid, frame);
     end
 
     robot.animate(q_traj(end,:));
+    set(hTrail1,'XData',trail_x,'YData',trail_y,'ZData',trail_z);
+    set(hTrail2,'XData',trail_x,'YData',trail_y,'ZData',trail_z);
 
-    set(hTrail,'XData',trail_x, ...
-               'YData',trail_y, ...
-               'ZData',trail_z);
+    drawnow;
+    frame = getframe(fig);
+    writeVideo(vid, frame);
 
-    drawnow; %limitrate;
+    close(vid);
     pause(2);
+end
+
+function formatarEixos(ax)
+    ax.Color = 'white';
+    ax.XColor = 'black';
+    ax.YColor = 'black';
+    ax.ZColor = 'black';
+    ax.GridColor = 'black';
+    ax.GridAlpha = 0.3;
+end
+
+function desenharEixosBase(ax)
+    L = 0.3;
+    quiver3(ax,0,0,0,L,0,0,'r','LineWidth',2,'AutoScale','off');
+    quiver3(ax,0,0,0,0,L,0,'g','LineWidth',2,'AutoScale','off');
+    quiver3(ax,0,0,0,0,0,L,'b','LineWidth',2,'AutoScale','off');
+
+    text(ax,L+0.03,0,0,'X_b','Color','r','FontWeight','bold');
+    text(ax,0,L+0.03,0,'Y_b','Color','g','FontWeight','bold');
+    text(ax,0,0,L+0.03,'Z_b','Color','b','FontWeight','bold');
 end
 
 function figuraYZ(pos_retangulo, pos_losango, pos_circulo, P0)
