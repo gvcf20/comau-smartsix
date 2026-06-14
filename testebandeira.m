@@ -38,11 +38,12 @@ robot.base = Hbase;
 %  2. PARÂMETROS
 %% ============================================================
 
-dt    = 0.015;   % passo de integração
-K     = 3.0;     % ganho proporcional
-N_reg = 650;     % pontos para regulação
-N_seg = 300;     % pontos para cada segmento de desenho
-mm    = 1e-3;    % conversão mm -> m
+dt      = 0.015;   % passo de integração
+K       = 2.0;     % ganho proporcional
+N_reg   = 1000;     % máximo de iterações para regulação
+N_seg   = 400;     % pontos para cada segmento de desenho
+epsilon = 1e-3;    % critério de parada da regulação (norma do erro em m/rad)
+mm      = 1e-3;    % conversão mm -> m
 
 if ~exist('results','dir'), mkdir('results'); end
 if ~exist('figs','dir'), mkdir('figs'); end
@@ -108,10 +109,10 @@ disp('Calculando trajetória da bandeira...');
 %% RETANGULO
 
 % Vai até P0 sem desenhar
-[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P0, N_reg, K, dt);
+[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P0, N_reg, K, dt, epsilon);
 
 % P0 a P1 sem desenhar
-[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P1, N_reg, K, dt);
+[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P1, N_reg, K, dt, epsilon);
 
 % Desenha o retângulo
 segmentos_ret = {P1,P2; P2,P3; P3,P4; P4,P1};
@@ -127,13 +128,13 @@ for i = 1:size(segmentos_ret,1)
 end
 
 % retorna para P0 sem desenhar
-[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P0, N_reg, K, dt);
+[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P0, N_reg, K, dt, epsilon);
 
 
 %% LOSANGO
 
 % Vai até P5 sem desenhar
-[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P5, N_reg, K, dt);
+[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P5, N_reg, K, dt, epsilon);
 
 % Desenha o losango
 segmentos_los = {P5,P5inf; P5inf,P5dir; P5dir,P5sup; P5sup,P5};
@@ -149,20 +150,20 @@ for i = 1:size(segmentos_los,1)
 end
 
 % retorna para P0 sem desenhar
-[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P0, N_reg, K, dt);
+[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P0, N_reg, K, dt, epsilon);
 
 
 %%  CIRCULO
 
 % Vai até P6 sem desenhar
-[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P6, N_reg, K, dt);
+[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P6, N_reg, K, dt, epsilon);
 
 % Desenha o círculo
 [q_atual, traj, pos_circulo] = addCirculo( ...
     robot, q_atual, traj, Rd, centro_circulo, raio_circulo, N_seg*2, K, dt);
 
 % Retorna para P0 sem desenhar
-[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P0, N_reg, K, dt);
+[q_atual, traj] = addRegulacao(robot, q_atual, traj, Rd, P0, N_reg, K, dt, epsilon);
 
 disp('Trajetória calculada.');
 
@@ -207,12 +208,13 @@ disp('Simulação concluída. Arquivos salvos em /results e /figs.');
 %  8. FUNÇÕES LOCAIS
 %% ============================================================
 
-function [q_final, traj] = addRegulacao(robot, q_inicial, traj, Rd, p_desejado, N, K, dt)
+function [q_final, traj] = addRegulacao(robot, q_inicial, traj, Rd, p_desejado, N, K, dt, epsilon)
 % Calcula um trecho de regulação e adiciona na trajetória total.
 % Regulação = ir até um ponto fixo sem desenhar.
+% Para quando norm(e) < epsilon OU após N iterações (o que vier primeiro).
 
     [q_final, q_trecho, pos_trecho, u_trecho, pos_ref_trecho, erro_rpy_trecho] = ...
-        controleRegulacao(robot, q_inicial, Rd, p_desejado, N, K, dt);
+        controleRegulacao(robot, q_inicial, Rd, p_desejado, N, K, dt, epsilon);
 
     traj = concatenarTrecho(traj, q_trecho, pos_trecho, u_trecho, ...
                             pos_ref_trecho, erro_rpy_trecho, false);
@@ -280,20 +282,26 @@ function [erro_ori, erro_rpy] = erroOrientacao(Rd, R_atual)
 end
 
 function [q_final, q_traj, pos_traj, u_traj, pos_ref_traj, erro_rpy_traj] = ...
-    controleRegulacao(robot, q_inicial, Rd, p_desejado, N, K, dt)
+    controleRegulacao(robot, q_inicial, Rd, p_desejado, N, K, dt, epsilon)
 % Controle de regulação:
 % leva o efetuador até um ponto fixo p_desejado.
 %
 % Lei:
 % u = pinv(J) * K * e
+%
+% Para quando norm(e) < epsilon OU após N iterações (o que vier primeiro).
+% Equivalente ao critério de parada do control.m de referência.
 
     q = q_inicial(:);
 
+    % Pré-aloca com tamanho máximo e trunca ao final
     q_traj        = zeros(N,6);
     pos_traj      = zeros(N,3);
     u_traj        = zeros(N,6);
     pos_ref_traj  = repmat(p_desejado', N, 1);
     erro_rpy_traj = zeros(N,3);
+
+    k_final = N;  % será atualizado se convergir antes
 
     for k = 1:N
         T = getT(robot.fkine(q'));
@@ -305,6 +313,12 @@ function [q_final, q_traj, pos_traj, u_traj, pos_ref_traj, erro_rpy_traj] = ...
 
         e = [erro_pos; erro_ori];
 
+        % Critério de parada: norma do erro abaixo do limiar
+        if norm(e) < epsilon
+            k_final = max(k - 1, 1);  % garante ao menos 1 ponto no array
+            break;
+        end
+
         J = robot.jacob0(q');
         u = pinv(J) * (K * e);
 
@@ -314,7 +328,19 @@ function [q_final, q_traj, pos_traj, u_traj, pos_ref_traj, erro_rpy_traj] = ...
         pos_traj(k,:)      = p_atual';
         u_traj(k,:)        = u';
         erro_rpy_traj(k,:) = erro_rpy;
+
+        % Se chegou à última iteração sem convergir, avisa
+        if k == N
+            fprintf('[regulacao] aviso: nao convergiu em %d iteracoes. norm(e)=%.4f\n', N, norm(e));
+        end
     end
+
+    % Trunca os arrays ao número real de iterações executadas
+    q_traj        = q_traj(1:k_final,:);
+    pos_traj      = pos_traj(1:k_final,:);
+    u_traj        = u_traj(1:k_final,:);
+    pos_ref_traj  = pos_ref_traj(1:k_final,:);
+    erro_rpy_traj = erro_rpy_traj(1:k_final,:);
 
     q_final = q';
 end
@@ -481,7 +507,8 @@ function animacaoRapida(robot, q_traj, pos_traj, flag_desenho)
                'YData',trail_y, ...
                'ZData',trail_z);
 
-    drawnow limitrate;
+    drawnow; %limitrate;
+    pause(2);
 end
 
 function figuraYZ(pos_retangulo, pos_losango, pos_circulo, P0)
